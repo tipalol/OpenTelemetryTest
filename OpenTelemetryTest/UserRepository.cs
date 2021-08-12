@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Npgsql;
 
@@ -11,11 +12,11 @@ namespace OpenTelemetryTest
         public async Task Clear()
         {
             await using var connection = new NpgsqlConnection(ConnectionString);
-            
+
             connection.Open();
 
             await using var command = new NpgsqlCommand("DROP TABLE IF EXISTS users", connection);
-
+            
             command.ExecuteNonQuery();
 
             await using var command2 = new NpgsqlCommand("CREATE TABLE users(id serial PRIMARY KEY, name VARCHAR(50), money INTEGER)", connection);
@@ -29,12 +30,21 @@ namespace OpenTelemetryTest
             
             connection.Open();
 
-            await using var command = new NpgsqlCommand("INSERT INTO users (name, money) VALUES (@n1, @m1)", connection);
+            var query = "INSERT INTO users (name, money) VALUES (@n1, @m1)";
 
-            command.Parameters.AddWithValue("n1", user.Name);
-            command.Parameters.AddWithValue("m1", user.Money);
-            
-            await command.ExecuteNonQueryAsync();
+            using (var span =
+                Program.MyActivitySource.StartActivity(query,
+                    ActivityKind.Client))
+            {
+                
+                await using var command =
+                    new NpgsqlCommand(query, connection);
+
+                command.Parameters.AddWithValue("n1", user.Name);
+                command.Parameters.AddWithValue("m1", user.Money);
+
+                await command.ExecuteNonQueryAsync();
+            }
         }
 
         public async Task<User> Get(int id)
@@ -43,20 +53,28 @@ namespace OpenTelemetryTest
             
             connection.Open();
 
-            await using var command = new NpgsqlCommand("SELECT id, name, money FROM users", connection);
+            var query = "SELECT id, name, money FROM users";
 
-            Console.WriteLine();
+            using (var span =
+                Program.MyActivitySource.StartActivity(query,
+                    ActivityKind.Client))
+            {
 
-            var reader = await command.ExecuteReaderAsync();
+                await using var command = new NpgsqlCommand(query, connection);
 
-            reader.Read();
+                Console.WriteLine();
 
-            var name = reader.GetString(1);
-            var money = reader.GetInt32(2);
-            
-            await reader.CloseAsync();
-            
-            return new User() {Name=name, Money = money};
+                var reader = await command.ExecuteReaderAsync();
+
+                reader.Read();
+
+                var name = reader.GetString(1);
+                var money = reader.GetInt32(2);
+
+                await reader.CloseAsync();
+
+                return new User() {Name = name, Money = money};
+            }
         }
     }
 }

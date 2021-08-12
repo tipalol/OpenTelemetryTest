@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -9,14 +10,21 @@ namespace OpenTelemetryTest
 {
     class Program
     {
-        static async Task Main(string[] args)
+        public static readonly ActivitySource MyActivitySource = new ActivitySource(
+            "tipalol.OpenTelemetryTest.Dotnet");
+
+        public async static Task Main()
         {
             using var tracerProvider = Sdk.CreateTracerProviderBuilder()
                 .SetSampler(new AlwaysOnSampler())
-                .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("jaeger-test"))
-                .AddSqlClientInstrumentation(
-                    options => options.SetDbStatementForText = true)
-                .AddSource("Sampler")
+                .SetErrorStatusOnException()
+                .AddSource("tipalol.OpenTelemetryTest.Dotnet")
+                .AddSqlClientInstrumentation(o =>
+                {
+                    o.SetDbStatementForText = true;
+                    o.EnableConnectionLevelAttributes = true;
+                    o.RecordException = true;
+                })
                 .AddJaegerExporter(o =>
                 {
                     // Examples for the rest of the options, defaults unless otherwise specified
@@ -36,35 +44,29 @@ namespace OpenTelemetryTest
                 })
                 .AddConsoleExporter()
                 .Build();
-            
-            using (var activity = MyActivitySource.StartActivity("SayHello"))
-            {
-                activity?.SetTag("foo", 1);
-                activity?.SetTag("bar", "Hello, World!");
-                activity?.SetTag("baz", new int[] { 1, 2, 3 });
-            }
-            
-            using (Activity activity = MyActivitySource.StartActivity("SomeWork"))
-            {
-                await Task.Delay(500);
-            }
-            
-            var repository = new UserRepository();
-            
-            var user = new User()
-            {
-                Name = "Elon Musk",
-                Money = 500000
-            };
-            
-            await repository.Add(user);
 
-            var dbUser = await  repository.Get(1);
+            using (var activity = MyActivitySource.StartActivity("App"))
+            {
+                var repository = new UserRepository();
+            
+                var user = new User()
+                {
+                    Name = "Elon Musk",
+                    Money = 500000
+                };
 
-            Console.WriteLine(user.Name + " vs " + dbUser.Name);
+                using (var span = MyActivitySource.StartActivity("Add user to DB"))
+                {
+                    await repository.Add(user);
+                }
+
+                using (var span = MyActivitySource.StartActivity("Getting user from DB"))
+                {
+                    var dbUser = await repository.Get(1);
+
+                    Console.WriteLine(user.Name + " vs " + dbUser.Name);
+                }
+            }
         }
-        
-        private static readonly ActivitySource MyActivitySource = new ActivitySource(
-            "MyCompany.MyProduct.MyLibrary");
     }
 }
